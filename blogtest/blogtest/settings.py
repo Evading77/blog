@@ -140,7 +140,6 @@ CACHES={    #默认
         }
     },
 }
-
 #session由数据库存储改为redis存储
 SESSION_ENGINE="django.contrib.sessions.backends.cache"
 SESSION_CACHE_ALIAS="session"
