@@ -1,9 +1,20 @@
-from django.http import HttpResponseBadRequest, HttpResponse
-from django.shortcuts import render
+import logging
+import re
+from random import randint
+
+from django.contrib.auth import login
+from django.http import HttpResponseBadRequest, HttpResponse, JsonResponse
+from django.shortcuts import render, redirect
+from django.urls import reverse
 from django.views import View
 from libs.captcha.captcha import captcha
 from django_redis import get_redis_connection
 
+from libs.yuntongxun.sms import CCP
+from users.models import User
+from utils.response_code import RETCODE
+
+logger=logging.getLogger('django')
 class RegisterView(View):
     def get(self,request):
         """
@@ -12,6 +23,58 @@ class RegisterView(View):
         :return:注册界面
         """
         return render(request,'register.html')
+
+    def post(self,request):
+        # 1、接收参数
+        mobile=request.POST.get('mobile')
+        password=request.POST.get('password')
+        password2=request.POST.get('password2')
+        smscode=request.POST.get('sms_code')
+
+        # 2、验证数据
+        # 2.1、判断参数是否齐全
+        if not all([mobile,password,password2,smscode]):
+            return HttpResponseBadRequest('缺少必传参数')
+
+        # 2.2、判断手机号是否合法
+        if not re.match(r'^1[3-9]\d{9}$',mobile):
+            return HttpResponseBadRequest('请输入正确的手机号码')
+
+        # 2.3、判断密码是否是8-20个字符
+        if not re.match(r'^[0-9a-zA-Z]{8,20}$',password):
+            return HttpResponseBadRequest('请输入8-20位的密码')
+        # 2.4、判断两次密码是否一致
+        if password!=password2:
+            return HttpResponseBadRequest('两次输入的密码不一致')
+        # 2.5、验证短信验证码
+        redis_conn=get_redis_connection('default')
+        sms_code_server=redis_conn.get('sms:%s' % mobile)
+
+        if sms_code_server is None:
+            return HttpResponseBadRequest('短信验证码已过期')
+        if smscode!=sms_code_server.decode():
+            return HttpResponseBadRequest('短信验证码错误')
+
+        # 3、保存注册数据
+        try:
+            # create_user可以使用系统的方法对密码进行加密
+            user=User.objects.create_user(username=mobile,mobile=mobile,password=password)
+        except Exception as e:
+            logger.error(e)
+            return HttpResponseBadRequest('注册失败')
+
+        # 实现状态保持
+        login(request,user)
+        # 4、响应注册结果，跳转到首页
+        #redirect 是进行重定向
+        #reverse 是可以通过namespace:name来获取所对应的路由
+        response= redirect(reverse('home:index'))
+        # 设置cookie信息，以方便首页中用户信息展示的判断和用户信息的显示
+        response.set_cookie('is_login',True)
+        #设置用户名有效期一个月
+        response.set_cookie('username',user.username,max_age=30*24*3600)
+
+        return response
 
 
 class ImageCodeView(View):
@@ -39,3 +102,51 @@ class ImageCodeView(View):
 
         # 5. 返回响应，将生成的图片以content_type为image/jpeg的形式返回给请求
         return HttpResponse(image,content_type='image/jpeg')
+
+class SmsCodeView(View):
+    def get(self,request):
+        # 1、接收参数
+        image_code=request.GET.get('image_code')
+        uuid=request.GET.get('uuid')
+        mobile=request.GET.get('mobile')
+
+        logger.info(image_code,uuid,mobile)
+        # 2、校验参数
+        # 2.1验证参数是否齐全
+        if not all([image_code,uuid,mobile]):
+            return JsonResponse({'code':RETCODE.NECESSARYPARAMERR,'errmsg':'缺少必传参数！'})
+
+        # 2.2图片验证码的验证
+        # 创建连接到redis的对象，连接redis，获取redis中的图片验证码
+        redis_conn=get_redis_connection('default')
+        # 提取图形验证码
+        redis_image_code=redis_conn.get('img:%s' %uuid)
+        # 判断图片验证码是否存在
+        if redis_image_code is None:
+            #图形验证码过期或者不存在
+            return JsonResponse({'code':RETCODE.IMAGECODEERR,'errmsg':'图形验证码失效！'})
+        # 如果图片验证码未过期，我们获取到之后，就可以删除图片验证码了
+        # 删除图形验证码，避免恶意测试图形验证码
+        try:
+            redis_conn.delete('img:%s' %uuid)
+        except Exception as e:
+            logger.error(e)
+        # 对比图形验证码，注意大小写的问题，redis的数据是bytes类型
+        if redis_image_code.decode().lower()!=image_code.lower():
+            return JsonResponse({'code':RETCODE.IMAGECODEERR,'errmsg':'输入图形验证码有误！'})
+        # 3、生成短信验证码：生成6位数验证码
+        sms_code='%06d' % randint(0,999999)
+        # 将验证码输出在控制台，以方便调试
+        logger.info("短信验证码是： "+sms_code)
+
+        # 4、保存短信验证码到redis中，并设置有效期
+        redis_conn.setex('sms:%s' % mobile,300,sms_code)
+        # 5、发送短信验证码
+        CCP().send_template_sms(mobile,[sms_code,5],1)
+        # 6、响应结果
+        # 没有注册短信发送的这个，直接返回true
+        return JsonResponse({'code':RETCODE.OK,'errmsg':'发送短信成功!'})
+
+
+
+

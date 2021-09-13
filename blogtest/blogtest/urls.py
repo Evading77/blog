@@ -21,4 +21,6 @@ urlpatterns = [
     #include的参数中，我们先来设置一个元组 urlconf_module,app_name
     #urlconf_module:子应用的路由      app_name：子应用的名字
     path('',include(('users.urls','users'),namespace='users')),
+
+    path('',include(('home.urls','home'),namespace='home')),
 ]
