@@ -198,13 +198,13 @@ class LoginView(View):
             #没有记住用户：浏览器会话结束后就过期
             request.session.set_expiry(0)
             #设置cookie
-            response.set_cookie('is_cookie',True)
+            response.set_cookie('is_login',True)
             response.set_cookie('username',user.username,max_age=14*24*3600)
         else:
             #记住用户：None表示两周后过期
             request.session.set_expiry(None)
             # 设置cookie
-            response.set_cookie('is_cookie', True,max_age=14*24*3600)
+            response.set_cookie('is_login', True,max_age=14*24*3600)
             response.set_cookie('username', user.username, max_age=14 * 24 * 3600)
         # 7、返回响应
         return response
