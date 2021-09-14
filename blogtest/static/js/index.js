@@ -9,9 +9,10 @@ var vm = new Vue({
         username:''
     },
     mounted(){
+    //获取用户名信息
         this.username=getCookie('username');
-        // this.is_login=getCookie('is_login');
-        this.is_login=true
+        this.is_login=getCookie('is_login');
+//        this.is_login=true
     },
     methods: {
         //显示下拉菜单
